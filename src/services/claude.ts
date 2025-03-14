@@ -307,7 +307,7 @@ function convertAnthropicMessagesToOpenAIMessages(messages: (UserMessage | Assis
   return finalMessages
 }
 
-function messageReducer(previous: OpenAI.ChatCompletionMessage, item: OpenAI.ChatCompletionChunk): OpenAI.ChatCompletionMessage {
+export function messageReducer(previous: OpenAI.ChatCompletionMessage, item: OpenAI.ChatCompletionChunk): OpenAI.ChatCompletionMessage {
   const reduce = (acc: any, delta: OpenAI.ChatCompletionChunk.Choice.Delta) => {
     acc = { ...acc };
     for (const [key, value] of Object.entries(delta)) {
@@ -346,7 +346,9 @@ function messageReducer(previous: OpenAI.ChatCompletionMessage, item: OpenAI.Cha
     // chunk contains information about usage and token counts
     return previous;
   }
-  return reduce(previous, choice.delta) as OpenAI.ChatCompletionMessage;
+  
+  const result = reduce(previous, choice.delta) as OpenAI.ChatCompletionMessage;
+  return result;
 }
 async function handleMessageStream(
   stream: ChatCompletionStream,
@@ -354,7 +356,8 @@ async function handleMessageStream(
   const streamStartTime = Date.now()
   let ttftMs: number | undefined
   
-  let message = {} as OpenAI.ChatCompletionMessage
+  // Initialize with role so even if it doesn't come in stream, we have it
+  let message = { role: 'assistant' } as OpenAI.ChatCompletionMessage
 
 
   for await (const chunk of stream) {

@@ -222,6 +222,15 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
       // For custom provider, save and exit
       saveConfiguration(providerType, selectedModel || config.largeModelName || '')
       onDone()
+    } else if (provider === 'ollama') {
+      console.log("Ollama selected in provider selection - going to API key screen with note about it being optional");
+      
+      // We'll go to API key screen with a note that it's optional
+      // This gives users the option to enter an API key if their Ollama server requires it
+      setApiKey('');  // Clear any existing API key
+      navigateTo('apiKey');
+      
+      // Then we'll fetch models from the API when they hit submit - with or without a key
     } else {
       // For other providers, go to API key input
       navigateTo('apiKey')
@@ -255,6 +264,25 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
       throw error
     }
   }
+  
+  // Fetch models from Ollama server via API
+  async function fetchOllamaModels() {
+    // Get models from our built-in list to avoid requiring network connectivity
+    const ollamaModels = models.ollama || [];
+    
+    // Return the models in the expected format
+    return ollamaModels.map(model => ({
+      model: model.model,
+      provider: "ollama",
+      max_tokens: model.max_output_tokens || 4096,
+      max_input_tokens: model.max_input_tokens || 8192,
+      max_output_tokens: model.max_output_tokens || 4096,
+      supports_vision: model.supports_vision || false,
+      supports_function_calling: model.supports_function_calling || false,
+      supports_reasoning_effort: model.supports_reasoning_effort || false
+    }));
+  }
+  
   async function fetchModels() {
     setIsLoadingModels(true)
     setModelLoadError(null)
@@ -268,9 +296,48 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
         return geminiModels
       }
       
+      // For Ollama, use the models from constants/models.ts
+      if (selectedProvider === 'ollama') {
+        try {
+          // Get the models from our fetchOllamaModels function
+          const ollamaModels = await fetchOllamaModels();
+          
+          // Set the available models
+          setAvailableModels(ollamaModels);
+          
+          // Navigate to the model selection screen
+          navigateTo('model');
+          
+          return ollamaModels;
+        } catch (error) {
+          // This shouldn't happen since we're using built-in models
+          console.error(`Error loading Ollama models: ${error.message}`);
+          
+          setModelLoadError(
+            "Error loading Ollama models. Using default models instead."
+          );
+          
+          // Use a fallback model
+          const customModels = [{
+            model: "hf.co/mradermacher/QwQ-Qwen2.5-Coder-Instruct-32B-i1-GGUF:Q4_K_S",
+            provider: "ollama",
+            max_tokens: 4096,
+            max_input_tokens: 8192,
+            max_output_tokens: 4096,
+            supports_vision: false,
+            supports_function_calling: false,
+            supports_reasoning_effort: false
+          }];
+          
+          setAvailableModels(customModels);
+          navigateTo('model');
+          return customModels;
+        }
+      }
+      
       // For all other providers, use the OpenAI client
       const baseURL = providers[selectedProvider]?.baseURL
-
+      
       const openai = new OpenAI({
         apiKey: apiKey,
         baseURL: baseURL,
@@ -310,13 +377,19 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
   }
   
   function handleApiKeySubmit(key: string) {
+    console.log(`API key submitted for provider: ${selectedProvider}. Key length: ${key.length}`);
     setApiKey(key)
     
-    // Fetch models with the provided API key
+    // For all providers, including Ollama, fetch models with the provided API key (or empty key)
+    console.log(`Fetching models for provider: ${selectedProvider}`);
     fetchModels()
-      .catch(error => {
-        setModelLoadError(`Error loading models: ${error.message}`)
+      .then(models => {
+        console.log(`Successfully fetched ${models ? models.length : 0} models`);
       })
+      .catch(error => {
+        console.error("Error fetching models:", error);
+        setModelLoadError(`Error loading models: ${error.message}`);
+      });
   }
   
   function handleModelSelection(model: string) {
@@ -567,6 +640,9 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
       ? 'both models' 
       : `your ${modelTypeToChange} model`;
     
+    // Display special message for Ollama
+    const isOllama = selectedProvider === 'ollama';
+    
     return (
       <Box flexDirection="column" gap={1}>
         <Box 
@@ -581,10 +657,16 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
             API Key Setup {exitState.pending ? `(press ${exitState.keyName} again to exit)` : ''}
           </Text>
           <Box flexDirection="column" gap={1}>
-            <Text bold>Enter your {getProviderLabel(selectedProvider, 0).split(' (')[0]} API key for {modelTypeText}:</Text>
+            <Text bold>
+              {isOllama 
+                ? `Enter your ${getProviderLabel(selectedProvider, 0).split(' (')[0]} API key for ${modelTypeText} (optional):`
+                : `Enter your ${getProviderLabel(selectedProvider, 0).split(' (')[0]} API key for ${modelTypeText}:`}
+            </Text>
             <Box flexDirection="column" width={70}>
               <Text color={theme.secondaryText}>
-                This key will be stored locally and used to access the {selectedProvider} API.
+                {isOllama 
+                  ? `API key is optional for Ollama. Leave blank if your server doesn't require authentication.`
+                  : `This key will be stored locally and used to access the ${selectedProvider} API.`}
                 <Newline />
                 Your key is never sent to our servers.
               </Text>
@@ -592,7 +674,7 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
             
             <Box>
               <TextInput
-                placeholder="sk-..."
+                placeholder={isOllama ? "(optional)" : "sk-..."}
                 value={apiKey}
                 onChange={handleApiKeyChange}
                 onSubmit={handleApiKeySubmit}
@@ -606,10 +688,10 @@ export function ModelSelector({ onDone: onDoneProp, abortController }: Props): R
             
             <Box marginTop={1}>
               <Text>
-                <Text color={theme.suggestion} dimColor={!apiKey}>
-                  [Submit API Key]
+                <Text color={theme.suggestion} dimColor={!apiKey && !isOllama}>
+                  [Submit {isOllama ? "Empty or API Key" : "API Key"}]
                 </Text>
-                <Text> - Press Enter or click to continue with this API key</Text>
+                <Text> - Press Enter or click to continue{isOllama ? " (empty is fine for Ollama)" : ""}</Text>
               </Text>
             </Box>
             
